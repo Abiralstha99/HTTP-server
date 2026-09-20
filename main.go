@@ -34,14 +34,17 @@ func handleClient(conn net.Conn) {
 	fmt.Println("URL", url)
 	fmt.Println("Version", version)
 
-	// Write the same data back
-	message := []byte("HTTP/1.1 200 OK\r\n\r\n " + "Requested path: " + url +"\n")
-	n_write, err := conn.Write(message)
+	file_path := "www" + url
 
+	content, err := os.ReadFile(file_path)
 	if err != nil {
-		fmt.Println("Error writing:", err)
+		conn.Write([]byte("HTTP/1.1 400 Not Found\r\n\r\n"))
 		return
 	}
+
+	// Write the same data back
+	message := []byte("HTTP/1.1 200 OK\r\n\r\n " + string(content))
+	n_write, err := conn.Write(message)
 	fmt.Println("Wrote data", (n_write))
 }
 
@@ -64,7 +67,6 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
-
 		// Handle client connection
 		handleClient(conn)
 	}
