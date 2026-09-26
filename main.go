@@ -5,11 +5,14 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
-func handleClient(conn net.Conn) {
+func handleClient(conn net.Conn, id int) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
+
+	fmt.Println("Connection handler id:", id)
 
 	// Read data
 	buf := make([]byte, 1024)
@@ -19,11 +22,11 @@ func handleClient(conn net.Conn) {
 	}
 
 	req := string(buf[:n_read])
-	fmt.Println("Received data", req)
+	// fmt.Println("Received data", req)
 
 	// Parse the request
 	parts := strings.Fields(req)
-	fmt.Println("Parts", parts)
+	// fmt.Println("Parts", parts)
 
 	// Parse the request
 	method := parts[0]
@@ -42,10 +45,14 @@ func handleClient(conn net.Conn) {
 		return
 	}
 
+	time.Sleep(5 * time.Second)
+
 	// Write the same data back
 	message := []byte("HTTP/1.1 200 OK\r\n\r\n " + string(content))
 	n_write, err := conn.Write(message)
 	fmt.Println("Wrote data", (n_write))
+	fmt.Println("Path: ", url)
+	fmt.Println("Thread Id: ", id)
 }
 
 func main() {
@@ -60,6 +67,7 @@ func main() {
 
 	fmt.Println("Server is listening on port 8080")
 
+	id := 0
 	for {
 		// Block until we receive an incoming connection
 		conn, err := listener.Accept()
@@ -67,7 +75,8 @@ func main() {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
-		// Handle client connection
-		handleClient(conn)
+		id++
+		// Handle client connection using a goroutine
+		go handleClient(conn, id)
 	}
 }
