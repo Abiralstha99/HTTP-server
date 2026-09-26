@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -12,7 +13,8 @@ func handleClient(conn net.Conn, id int) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
 
-	fmt.Println("Connection handler id:", id)
+	start := time.Now()
+	fmt.Printf("Connection handler id: %d\n", id)
 
 	// Read data
 	buf := make([]byte, 1024)
@@ -51,11 +53,16 @@ func handleClient(conn net.Conn, id int) {
 	message := []byte("HTTP/1.1 200 OK\r\n\r\n " + string(content))
 	n_write, err := conn.Write(message)
 	fmt.Println("Wrote data", (n_write))
-	fmt.Println("Path: ", url)
-	fmt.Println("Thread Id: ", id)
+	// fmt.Println("Path: ", url)
+	// fmt.Println("Thread Id: ", id)
+	fmt.Printf("Connection handler finished for id: %d | duration: %v\n", id, time.Since(start))
 }
 
 func main() {
+	start := time.Now()
+
+	var wg sync.WaitGroup
+
 	// Create a TCP listener on port and wait for a connection
 	listener, err := net.Listen("tcp", "127.0.0.1:8000")
 
@@ -63,7 +70,6 @@ func main() {
 		fmt.Println("Failed to bind to port 80")
 		os.Exit(1)
 	}
-	defer listener.Close()
 
 	fmt.Println("Server is listening on port 8080")
 
@@ -72,11 +78,18 @@ func main() {
 		// Block until we receive an incoming connection
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-			continue
+			// Listener closed during shutdown
+			break
 		}
 		id++
+		wg.Add(1)
 		// Handle client connection using a goroutine
-		go handleClient(conn, id)
+		go func(conn net.Conn, id int) {
+			defer wg.Done()
+			handleClient(conn, id)
+		}(conn, id)
 	}
+
+	wg.Wait()
+	fmt.Println("Total time taken:", time.Since(start))
 }
