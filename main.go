@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
-func handleClient(conn net.Conn, id int) {
+func handleClient(conn net.Conn, id int, root string) {
 	// Ensure we close the connection after we're done
 	defer conn.Close()
 
@@ -39,7 +40,17 @@ func handleClient(conn net.Conn, id int) {
 	fmt.Println("URL", url)
 	fmt.Println("Version", version)
 
-	file_path := "www" + url
+	file_path := filepath.Join(root, url)
+
+	// Check if the file exists inside the root directory
+	_, err = os.Stat(file_path)
+
+	if err != nil {
+		// If the file does not exist, return a 404 Not Found response
+		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		fmt.Println("404 Not Found")
+		return
+	}
 
 	content, err := os.ReadFile(file_path)
 	if err != nil {
@@ -61,6 +72,11 @@ func handleClient(conn net.Conn, id int) {
 func main() {
 	start := time.Now()
 
+	root := "www"
+	if len(os.Args) > 1 {
+		root = os.Args[1]
+	}
+
 	var wg sync.WaitGroup
 
 	// Create a TCP listener on port and wait for a connection
@@ -72,6 +88,7 @@ func main() {
 	}
 
 	fmt.Println("Server is listening on port 8080")
+	fmt.Println("Serving from:", root)
 
 	id := 0
 	for {
@@ -86,7 +103,7 @@ func main() {
 		// Handle client connection using a goroutine
 		go func(conn net.Conn, id int) {
 			defer wg.Done()
-			handleClient(conn, id)
+			handleClient(conn, id, root)
 		}(conn, id)
 	}
 
