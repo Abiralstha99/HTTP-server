@@ -1,8 +1,11 @@
+//go:build darwin
+
 package main
 
 import (
 	"fmt"
 	"syscall"
+	"time"
 )
 
 // createEventQueue registers the listener for read readiness.
@@ -27,12 +30,21 @@ func createEventQueue(listenerFD int) (int, error) {
 
 // waitForEvents fills events and returns the number of entries to process.
 // Process ready sockets before waiting again; readiness is level-triggered.
-func waitForEvents(queueFD int, events []syscall.Kevent_t) (int, error) {
+func waitForEvents(queueFD int, events []syscall.Kevent_t, deadline time.Time) (int, error) {
 	if len(events) == 0 {
 		return 0, fmt.Errorf("event buffer is empty")
 	}
 	for {
-		n, err := syscall.Kevent(queueFD, nil, events, nil)
+		var timeout *syscall.Timespec
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining < 0 {
+				remaining = 0
+			}
+			value := syscall.NsecToTimespec(int64(remaining))
+			timeout = &value
+		}
+		n, err := syscall.Kevent(queueFD, nil, events, timeout)
 		// EINTR: The system call was interrupted by a signal.
 		if err == syscall.EINTR {
 			continue
@@ -40,12 +52,7 @@ func waitForEvents(queueFD int, events []syscall.Kevent_t) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("wait for events: %w", err)
 		}
-		for _, event := range events[:n] {
-			// EV_ERROR: The event has an error condition.
-			if event.Flags&syscall.EV_ERROR != 0 && event.Data != 0 {
-				return 0, fmt.Errorf("kqueue event: %w", syscall.Errno(event.Data))
-			}
-		}
+		// Event errors belong to individual descriptors; the caller handles them.
 		return n, nil
 	}
 }
