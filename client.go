@@ -37,34 +37,17 @@ func closeClient(clientFD int, client *Client, clients map[int]*Client) error {
 	return nil
 }
 
-// acceptClients drains pending connections into an initialized clients map.
-// The caller owns the tracked sockets and must close them when finished.
-func (worker *Worker) acceptClients(listenerFD, queueFD int, clients map[int]*Client, root string) error {
-	for {
-		fd, _, err := syscall.Accept(listenerFD)
-		if err == syscall.EINTR || err == syscall.ECONNABORTED {
-			continue
-		}
-		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("accept client: %w", err)
-		}
-		syscall.CloseOnExec(fd)
-		if err := syscall.SetNonblock(fd, true); err != nil {
-			syscall.Close(fd)
-			return fmt.Errorf("set client non-blocking mode: %w", err)
-		}
-		var event syscall.Kevent_t
-		syscall.SetKevent(&event, fd, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
-		if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
-			worker.counters.kqueueRegistrationFailure++
-			syscall.Close(fd)
-			return fmt.Errorf("register client: %w", err)
-		}
-		clients[fd] = &Client{queueFD: queueFD, root: root, deadline: time.Now().Add(readTimeout)}
+// registerClient takes ownership of fd and closes it if registration fails.
+func (worker *Worker) registerClient(fd, queueFD int, root string) error {
+	var event syscall.Kevent_t
+	syscall.SetKevent(&event, fd, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
+	if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
+		worker.counters.kqueueRegistrationFailure++
+		syscall.Close(fd)
+		return fmt.Errorf("register client: %w", err)
 	}
+	worker.clients[fd] = &Client{queueFD: queueFD, root: root, deadline: time.Now().Add(readTimeout)}
+	return nil
 }
 
 // handleClientRead queues one response. Call it again after that response is sent,
