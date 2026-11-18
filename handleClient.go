@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -146,14 +145,25 @@ func routeRequest(httpReq HTTPRequest, root string) HTTPResponse {
 		}
 	}
 
-	path := httpReq.Path
-	if path == "/" {
-		path = "/index.html"
+	name := strings.TrimPrefix(httpReq.Path, "/")
+	if name == "" {
+		name = "index.html"
 	}
 
-	file_path := filepath.Join(root, path)
+	documentRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return HTTPResponse{
+			StatusCode: 500,
+			StatusText: "Internal Server Error",
+			Headers: map[string]string{
+				"Content-Type": "text/plain",
+			},
+			Body: []byte("500 Internal Server Error"),
+		}
+	}
+	defer documentRoot.Close()
 
-	_, err := os.Stat(file_path)
+	content, err := documentRoot.ReadFile(name)
 	if err != nil {
 		return HTTPResponse{
 			StatusCode: 404,
@@ -162,18 +172,6 @@ func routeRequest(httpReq HTTPRequest, root string) HTTPResponse {
 				"Content-Type": "text/plain",
 			},
 			Body: []byte("404 Not Found"),
-		}
-	}
-
-	content, err := os.ReadFile(file_path)
-	if err != nil {
-		return HTTPResponse{
-			StatusCode: 400,
-			StatusText: "Bad Request",
-			Headers: map[string]string{
-				"Content-Type": "text/plain",
-			},
-			Body: []byte("400 Bad Request"),
 		}
 	}
 
