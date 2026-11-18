@@ -22,6 +22,7 @@ func createEventQueue(listenerFD int) (int, error) {
 	// EVFILT_READ: Notify me when a socket is ready for a read-related operation.
 	syscall.SetKevent(&event, listenerFD, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
 	if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
+		counters.kqueueRegistrationFailure++
 		syscall.Close(queueFD)
 		return -1, fmt.Errorf("register listener: %w", err)
 	}
