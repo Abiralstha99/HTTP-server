@@ -18,19 +18,16 @@ type workerCommand struct {
 	kind     string
 	fd       int
 	deadline time.Time
-	reply    chan workerCounters
 }
 
 type workerControl struct {
-	mutex          sync.Mutex
-	commands       []workerCommand
-	stopped        bool
-	readFD         int
-	writeFD        int
-	connections    int
-	highWater      int
-	snapshotQueued bool
-	stopQueued     bool
+	mutex       sync.Mutex
+	commands    []workerCommand
+	stopped     bool
+	readFD      int
+	writeFD     int
+	connections int
+	stopQueued  bool
 }
 
 // enqueue transfers ownership of a connection only when it returns nil.
@@ -44,14 +41,14 @@ func (worker *Worker) enqueue(command workerCommand) error {
 	if command.kind == "connection" && control.connections == handoffQueueCapacity {
 		return errHandoffQueueFull
 	}
-	if command.kind == "snapshot" && control.snapshotQueued || command.kind == "stop" && control.stopQueued {
+	if command.kind == "stop" && control.stopQueued {
 		return fmt.Errorf("worker %s already queued", command.kind)
 	}
-	if command.kind != "connection" && command.kind != "snapshot" && command.kind != "stop" {
+	if command.kind != "connection" && command.kind != "stop" {
 		return fmt.Errorf("unknown worker command: %s", command.kind)
 	}
 	if control.commands == nil {
-		control.commands = make([]workerCommand, 0, handoffQueueCapacity+2)
+		control.commands = make([]workerCommand, 0, handoffQueueCapacity+1)
 	}
 	control.commands = append(control.commands, command)
 	for {
@@ -68,11 +65,6 @@ func (worker *Worker) enqueue(command workerCommand) error {
 		switch command.kind {
 		case "connection":
 			control.connections++
-			if control.connections > control.highWater {
-				control.highWater = control.connections
-			}
-		case "snapshot":
-			control.snapshotQueued = true
 		case "stop":
 			control.stopQueued = true
 		}
@@ -96,7 +88,7 @@ func (worker *Worker) takeCommands() []workerCommand {
 	commands := control.commands
 	control.commands = nil
 	control.connections = 0
-	control.snapshotQueued, control.stopQueued = false, false
+	control.stopQueued = false
 	control.mutex.Unlock()
 	return commands
 }
@@ -125,7 +117,7 @@ func (worker *Worker) stopCommands() {
 	commands := control.commands
 	control.commands = nil
 	control.connections = 0
-	control.snapshotQueued, control.stopQueued = false, false
+	control.stopQueued = false
 	control.mutex.Unlock()
 	for _, command := range commands {
 		if command.kind == "connection" {

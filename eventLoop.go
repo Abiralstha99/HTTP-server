@@ -6,51 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
-	"strings"
+	"os"
 	"syscall"
 	"time"
 )
 
-// Each worker owns its clients and diagnostic counters.
-type workerCounters struct {
-	normalEOF                 uint64
-	readDeadlineExpired       uint64
-	protocolRejection         uint64
-	readErrors                map[syscall.Errno]uint64
-	writeErrors               map[syscall.Errno]uint64
-	socketEventErrors         map[syscall.Errno]uint64
-	shortWrites               uint64
-	kqueueRegistrationFailure uint64
-	handoffHighWater          int
-}
-
+// Each worker owns its clients and connection handoffs.
 type Worker struct {
-	clients  map[int]*Client
-	counters workerCounters
-	control  workerControl
+	clients map[int]*Client
+	control workerControl
 }
 
 func newWorker() *Worker {
-	return &Worker{clients: make(map[int]*Client), counters: workerCounters{readErrors: make(map[syscall.Errno]uint64), writeErrors: make(map[syscall.Errno]uint64), socketEventErrors: make(map[syscall.Errno]uint64)}}
-}
-
-func errorCounts(counts map[syscall.Errno]uint64) string {
-	keys := make([]int, 0, len(counts))
-	for errno := range counts {
-		keys = append(keys, int(errno))
-	}
-	sort.Ints(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%d:%s=%d", key, syscall.Errno(key), counts[syscall.Errno(key)]))
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-func (worker *Worker) printCounters(kind string, dispatchRejection uint64, highWater []int) {
-	fmt.Printf("Counters %s: normal_eof=%d read_deadline_expired=%d protocol_rejection=%d read_errors=%s write_errors=%s socket_event_errors=%s short_writes=%d kqueue_registration_failure=%d dispatch_rejection=%d handoff_queue_capacity=%d handoff_queue_high_water=%v\n", kind,
-		worker.counters.normalEOF, worker.counters.readDeadlineExpired, worker.counters.protocolRejection, errorCounts(worker.counters.readErrors), errorCounts(worker.counters.writeErrors), errorCounts(worker.counters.socketEventErrors), worker.counters.shortWrites, worker.counters.kqueueRegistrationFailure, dispatchRejection, handoffQueueCapacity, highWater)
+	return &Worker{clients: make(map[int]*Client)}
 }
 
 // runEventLoop owns all handed-off sockets. The caller closes its queue and wake pipe.
@@ -75,7 +43,6 @@ func (worker *Worker) runEventLoop(queueFD int, root string) (loopErr error) {
 				continue
 			}
 			if !client.deadline.After(now) {
-				worker.counters.readDeadlineExpired++
 				if err := closeClient(clientFD, client, worker.clients); err != nil {
 					return err
 				}
@@ -110,8 +77,6 @@ func (worker *Worker) runEventLoop(queueFD int, root string) (loopErr error) {
 							}
 							return err
 						}
-					case "snapshot":
-						command.reply <- worker.copyCounters()
 					case "stop":
 						for _, pending := range commands[i+1:] {
 							if pending.kind == "connection" {
@@ -129,13 +94,10 @@ func (worker *Worker) runEventLoop(queueFD int, root string) (loopErr error) {
 				continue
 			}
 			if len(client.output) == 0 && !client.deadline.After(time.Now()) {
-				worker.counters.readDeadlineExpired++
 				err = io.EOF
 			} else if event.Flags&syscall.EV_ERROR != 0 && event.Data != 0 {
-				worker.counters.kqueueRegistrationFailure++
 				err = fmt.Errorf("client event: %w", syscall.Errno(event.Data))
 			} else if event.Flags&syscall.EV_EOF != 0 && event.Fflags != 0 {
-				worker.counters.socketEventErrors[syscall.Errno(event.Fflags)]++
 				err = fmt.Errorf("client socket: %w", syscall.Errno(event.Fflags))
 			} else {
 				// EV_EOF alone can be a half-close with unread request data.
@@ -150,6 +112,9 @@ func (worker *Worker) runEventLoop(queueFD int, root string) (loopErr error) {
 				}
 			}
 			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					fmt.Fprintf(os.Stderr, "Client %d error: %v\n", clientFD, err)
+				}
 				if err := closeClient(clientFD, client, worker.clients); err != nil {
 					return err
 				}

@@ -41,7 +41,6 @@ func closeClient(clientFD int, client *Client, clients map[int]*Client) error {
 // Expired handoffs are closed before registration, as are registration failures.
 func (worker *Worker) registerClient(fd, queueFD int, root string, deadline time.Time) error {
 	if !deadline.After(time.Now()) {
-		worker.counters.readDeadlineExpired++
 		if err := syscall.Close(fd); err != nil {
 			return fmt.Errorf("close expired client: %w", err)
 		}
@@ -50,7 +49,6 @@ func (worker *Worker) registerClient(fd, queueFD int, root string, deadline time
 	var event syscall.Kevent_t
 	syscall.SetKevent(&event, fd, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
 	if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
-		worker.counters.kqueueRegistrationFailure++
 		syscall.Close(fd)
 		return fmt.Errorf("register client: %w", err)
 	}
@@ -96,12 +94,10 @@ func (worker *Worker) handleClientRead(clientFD int, client *Client) error {
 			return nil
 		}
 		if err != nil {
-			worker.counters.readErrors[err.(syscall.Errno)]++
 			return fmt.Errorf("read client: %w", err)
 		}
 		if n == 0 {
 			if len(client.input) == 0 {
-				worker.counters.normalEOF++
 				return io.EOF
 			}
 			malformed = true
@@ -121,7 +117,6 @@ func (worker *Worker) handleClientRead(clientFD int, client *Client) error {
 
 	var response HTTPResponse
 	if status != 0 {
-		worker.counters.protocolRejection++
 		response = HTTPResponse{
 			StatusCode: status,
 			StatusText: statusText,
@@ -162,7 +157,6 @@ func (worker *Worker) setClientReadiness(clientFD int, client *Client, filter in
 			continue
 		}
 		if err != nil {
-			worker.counters.kqueueRegistrationFailure++
 			return fmt.Errorf("update client readiness: %w", err)
 		}
 		return nil
@@ -187,11 +181,9 @@ func (worker *Worker) handleClientWrite(clientFD int, client *Client) error {
 			return nil
 		}
 		if err != nil {
-			worker.counters.writeErrors[err.(syscall.Errno)]++
 			return fmt.Errorf("write client: %w", err)
 		}
 		if n == 0 {
-			worker.counters.shortWrites++
 			return io.ErrShortWrite
 		}
 	}
