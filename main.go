@@ -27,7 +27,8 @@ func runServer(root string) error {
 	}
 	defer syscall.Close(listenerFD)
 
-	queueFD, err := createEventQueue(listenerFD)
+	worker := newWorker()
+	queueFD, err := worker.createEventQueue(listenerFD)
 	if err != nil {
 		return err
 	}
@@ -35,5 +36,5 @@ func runServer(root string) error {
 
 	fmt.Println("Server is listening on 127.0.0.1:8000")
 	fmt.Println("Serving from:", root)
-	return runEventLoop(listenerFD, queueFD, root)
+	return worker.runEventLoop(listenerFD, queueFD, root)
 }

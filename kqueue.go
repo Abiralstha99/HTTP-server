@@ -10,7 +10,7 @@ import (
 
 // createEventQueue registers the listener for read readiness.
 // The caller must close the returned queue with syscall.Close.
-func createEventQueue(listenerFD int) (int, error) {
+func (worker *Worker) createEventQueue(listenerFD int) (int, error) {
 	queueFD, err := syscall.Kqueue()
 	if err != nil {
 		return -1, fmt.Errorf("create kqueue: %w", err)
@@ -22,7 +22,7 @@ func createEventQueue(listenerFD int) (int, error) {
 	// EVFILT_READ: Notify me when a socket is ready for a read-related operation.
 	syscall.SetKevent(&event, listenerFD, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
 	if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
-		counters.kqueueRegistrationFailure++
+		worker.counters.kqueueRegistrationFailure++
 		syscall.Close(queueFD)
 		return -1, fmt.Errorf("register listener: %w", err)
 	}

@@ -39,7 +39,7 @@ func closeClient(clientFD int, client *Client, clients map[int]*Client) error {
 
 // acceptClients drains pending connections into an initialized clients map.
 // The caller owns the tracked sockets and must close them when finished.
-func acceptClients(listenerFD, queueFD int, clients map[int]*Client, root string) error {
+func (worker *Worker) acceptClients(listenerFD, queueFD int, clients map[int]*Client, root string) error {
 	for {
 		fd, _, err := syscall.Accept(listenerFD)
 		if err == syscall.EINTR || err == syscall.ECONNABORTED {
@@ -59,7 +59,7 @@ func acceptClients(listenerFD, queueFD int, clients map[int]*Client, root string
 		var event syscall.Kevent_t
 		syscall.SetKevent(&event, fd, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
 		if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
-			counters.kqueueRegistrationFailure++
+			worker.counters.kqueueRegistrationFailure++
 			syscall.Close(fd)
 			return fmt.Errorf("register client: %w", err)
 		}
@@ -70,7 +70,7 @@ func acceptClients(listenerFD, queueFD int, clients map[int]*Client, root string
 // handleClientRead queues one response. Call it again after that response is sent,
 // even if there is no new read event, to process any buffered next request.
 // io.EOF means a clean disconnect; other I/O errors also require caller cleanup.
-func handleClientRead(clientFD int, client *Client) error {
+func (worker *Worker) handleClientRead(clientFD int, client *Client) error {
 	if client.closed || client.closeAfterWrite || len(client.output) > 0 {
 		return nil
 	}
@@ -105,12 +105,12 @@ func handleClientRead(clientFD int, client *Client) error {
 			return nil
 		}
 		if err != nil {
-			counters.readErrors[err.(syscall.Errno)]++
+			worker.counters.readErrors[err.(syscall.Errno)]++
 			return fmt.Errorf("read client: %w", err)
 		}
 		if n == 0 {
 			if len(client.input) == 0 {
-				counters.normalEOF++
+				worker.counters.normalEOF++
 				return io.EOF
 			}
 			malformed = true
@@ -130,7 +130,7 @@ func handleClientRead(clientFD int, client *Client) error {
 
 	var response HTTPResponse
 	if status != 0 {
-		counters.protocolRejection++
+		worker.counters.protocolRejection++
 		response = HTTPResponse{
 			StatusCode: status,
 			StatusText: statusText,
@@ -152,13 +152,13 @@ func handleClientRead(clientFD int, client *Client) error {
 	}
 	client.output = serializeResponse(response)
 	client.writeOffset = 0
-	if err := setClientReadiness(clientFD, client, syscall.EVFILT_READ, false); err != nil {
+	if err := worker.setClientReadiness(clientFD, client, syscall.EVFILT_READ, false); err != nil {
 		return err
 	}
-	return setClientReadiness(clientFD, client, syscall.EVFILT_WRITE, true)
+	return worker.setClientReadiness(clientFD, client, syscall.EVFILT_WRITE, true)
 }
 
-func setClientReadiness(clientFD int, client *Client, filter int, enabled bool) error {
+func (worker *Worker) setClientReadiness(clientFD int, client *Client, filter int, enabled bool) error {
 	flags := syscall.EV_DISABLE
 	if enabled {
 		flags = syscall.EV_ADD | syscall.EV_ENABLE
@@ -171,7 +171,7 @@ func setClientReadiness(clientFD int, client *Client, filter int, enabled bool) 
 			continue
 		}
 		if err != nil {
-			counters.kqueueRegistrationFailure++
+			worker.counters.kqueueRegistrationFailure++
 			return fmt.Errorf("update client readiness: %w", err)
 		}
 		return nil
@@ -180,7 +180,7 @@ func setClientReadiness(clientFD int, client *Client, filter int, enabled bool) 
 
 // handleClientWrite preserves unsent bytes until the socket is writable again.
 // io.EOF means the response is drained and the caller should close the client.
-func handleClientWrite(clientFD int, client *Client) error {
+func (worker *Worker) handleClientWrite(clientFD int, client *Client) error {
 	if client.closed || len(client.output) == 0 {
 		return nil
 	}
@@ -196,15 +196,15 @@ func handleClientWrite(clientFD int, client *Client) error {
 			return nil
 		}
 		if err != nil {
-			counters.writeErrors[err.(syscall.Errno)]++
+			worker.counters.writeErrors[err.(syscall.Errno)]++
 			return fmt.Errorf("write client: %w", err)
 		}
 		if n == 0 {
-			counters.shortWrites++
+			worker.counters.shortWrites++
 			return io.ErrShortWrite
 		}
 	}
-	if err := setClientReadiness(clientFD, client, syscall.EVFILT_WRITE, false); err != nil {
+	if err := worker.setClientReadiness(clientFD, client, syscall.EVFILT_WRITE, false); err != nil {
 		return err
 	}
 	client.output = nil
@@ -213,8 +213,8 @@ func handleClientWrite(clientFD int, client *Client) error {
 		return io.EOF
 	}
 	client.deadline = time.Now().Add(readTimeout)
-	if err := setClientReadiness(clientFD, client, syscall.EVFILT_READ, true); err != nil {
+	if err := worker.setClientReadiness(clientFD, client, syscall.EVFILT_READ, true); err != nil {
 		return err
 	}
-	return handleClientRead(clientFD, client)
+	return worker.handleClientRead(clientFD, client)
 }
