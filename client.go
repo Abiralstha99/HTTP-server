@@ -37,8 +37,16 @@ func closeClient(clientFD int, client *Client, clients map[int]*Client) error {
 	return nil
 }
 
-// registerClient takes ownership of fd and closes it if registration fails.
-func (worker *Worker) registerClient(fd, queueFD int, root string) error {
+// registerClient takes ownership of fd, preserving the dispatcher's read deadline.
+// Expired handoffs are closed before registration, as are registration failures.
+func (worker *Worker) registerClient(fd, queueFD int, root string, deadline time.Time) error {
+	if !deadline.After(time.Now()) {
+		worker.counters.readDeadlineExpired++
+		if err := syscall.Close(fd); err != nil {
+			return fmt.Errorf("close expired client: %w", err)
+		}
+		return nil
+	}
 	var event syscall.Kevent_t
 	syscall.SetKevent(&event, fd, syscall.EVFILT_READ, syscall.EV_ADD|syscall.EV_ENABLE)
 	if _, err := syscall.Kevent(queueFD, []syscall.Kevent_t{event}, nil, nil); err != nil {
@@ -46,7 +54,7 @@ func (worker *Worker) registerClient(fd, queueFD int, root string) error {
 		syscall.Close(fd)
 		return fmt.Errorf("register client: %w", err)
 	}
-	worker.clients[fd] = &Client{queueFD: queueFD, root: root, deadline: time.Now().Add(readTimeout)}
+	worker.clients[fd] = &Client{queueFD: queueFD, root: root, deadline: deadline}
 	return nil
 }
 

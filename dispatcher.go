@@ -139,6 +139,7 @@ func dispatch(listenerFD, queueFD, failureFD int, workers []*Worker, results <-c
 			if err != nil {
 				return fmt.Errorf("accept client: %w", err)
 			}
+			deadline := time.Now().Add(readTimeout)
 			syscall.CloseOnExec(fd)
 			if err := syscall.SetNonblock(fd, true); err != nil {
 				syscall.Close(fd)
@@ -147,7 +148,7 @@ func dispatch(listenerFD, queueFD, failureFD int, workers []*Worker, results <-c
 			worker := workers[nextWorker]
 			nextWorker = (nextWorker + 1) % len(workers)
 			// The dispatcher owns fd until enqueue succeeds; the worker owns it thereafter.
-			if err := worker.enqueue(workerCommand{kind: "connection", fd: fd}); err != nil {
+			if err := worker.enqueue(workerCommand{kind: "connection", fd: fd, deadline: deadline}); err != nil {
 				syscall.Close(fd)
 				if err == errHandoffQueueFull {
 					dispatchRejection++

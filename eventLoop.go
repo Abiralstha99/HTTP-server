@@ -102,7 +102,7 @@ func (worker *Worker) runEventLoop(queueFD int, root string) (loopErr error) {
 				for i, command := range commands {
 					switch command.kind {
 					case "connection":
-						if err := worker.registerClient(command.fd, queueFD, root); err != nil {
+						if err := worker.registerClient(command.fd, queueFD, root, command.deadline); err != nil {
 							for _, pending := range commands[i+1:] {
 								if pending.kind == "connection" {
 									syscall.Close(pending.fd)

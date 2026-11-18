@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const handoffQueueCapacity = 256
@@ -14,9 +15,10 @@ const handoffQueueCapacity = 256
 var errHandoffQueueFull = errors.New("worker handoff queue full")
 
 type workerCommand struct {
-	kind  string
-	fd    int
-	reply chan workerCounters
+	kind     string
+	fd       int
+	deadline time.Time
+	reply    chan workerCounters
 }
 
 type workerControl struct {
